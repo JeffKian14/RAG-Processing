@@ -1,0 +1,8 @@
+pydantic
+numpy==1.26.4
+requests
+tiktoken
+beautifulsoup4
+python-docx
+python-pptx
+PyMuPDF
