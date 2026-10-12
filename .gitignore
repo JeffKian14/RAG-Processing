@@ -1,0 +1,27 @@
+# Ignore dataset contents, but keep the folder
+Dataset/*
+!Dataset/.gitkeep
+
+# Python environments
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+
+# API keys and credentials
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# RAG generated files
+chroma_db/
+vector_store/
+faiss_index/
+*.sqlite3
+
+# IDE files
+.vscode/
+.idea/
