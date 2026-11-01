@@ -1,3 +1,10 @@
+"""Build structure-aware parents and linked retrieval children.
+
+Parents respect changes in the top-level heading. Children partition each
+parent without overlap; concatenating either level reconstructs the rendered
+ChunkUnit source exactly, including its inter-unit separators.
+"""
+
 from typing import List, Tuple
 from src.schemas import NormalizedDocument, Chunk
 from src.chunking.units import build_chunk_units
@@ -94,19 +101,35 @@ def _build_atoms(doc: NormalizedDocument) -> List[dict]:
     Build exact source atoms.
 
     IMPORTANT:
-    Split unit.text BEFORE adding the inter-unit "\\n\\n" separator.
-    This prevents separator-only fragments from inheriting the next
-    unit's provenance.
+    Split unit.text BEFORE adding the inter-unit "\\n\\n" separator,
+    and include that separator in the first fragment's token budget.
+    This prevents oversized atoms and separator-only fragments from
+    inheriting the next unit's provenance.
     """
     units = build_chunk_units(doc)
     atoms = []
 
     for unit_index, unit in enumerate(units):
-        fragments = _recursive_split(unit.text, CHILD_MAX_TOKENS, SEPARATORS) if count_tokens(unit.text) > CHILD_MAX_TOKENS else [unit.text]
+        prefix = "\n\n" if unit_index > 0 else ""
+
+        if count_tokens(prefix + unit.text) <= CHILD_MAX_TOKENS:
+            fragments = [unit.text]
+        else:
+            # Leave space for the separator without making it a separate
+            # atom. Recount the actual concatenation rather than assuming
+            # token counts are additive at a string boundary.
+            limit = CHILD_MAX_TOKENS - count_tokens(prefix)
+            while limit > 0:
+                fragments = _recursive_split(unit.text, limit, SEPARATORS)
+                if count_tokens(prefix + fragments[0]) <= CHILD_MAX_TOKENS:
+                    break
+                limit -= 1
+            else:
+                raise ValueError("Unable to fit a source unit with its separator")
 
         for fragment_index, fragment in enumerate(fragments):
-            prefix = "\n\n" if unit_index > 0 and fragment_index == 0 else ""
-            atoms.append({"raw": prefix + fragment, "unit": unit})
+            raw = prefix + fragment if fragment_index == 0 else fragment
+            atoms.append({"raw": raw, "unit": unit})
 
     source_text = "\n\n".join(unit.text for unit in units)
 
@@ -261,6 +284,14 @@ def _metadata_from_group(group: List[dict]):
 
 
 def chunk_document(doc: NormalizedDocument) -> Tuple[List[Chunk], List[Chunk]]:
+    """Return ``(parents, children)`` with deterministic IDs and links.
+
+    Parent target/max: 800/1000 tokens. Child target/max: 220/300 tokens.
+    Complete topics or parents already under their maximum stay intact.
+    A chunk spanning multiple pages or slides uses None for that scalar
+    provenance field; its hierarchy is the common prefix of its units.
+    Oversized blocks split at paragraphs/lines before finer boundaries.
+    """
     atoms = _build_atoms(doc)
 
     if not atoms: return [], []
@@ -367,8 +398,34 @@ def chunk_document(doc: NormalizedDocument) -> Tuple[List[Chunk], List[Chunk]]:
         raise ValueError("Child exceeds maximum token limit")
 
     parent_ids = {parent.chunk_id for parent in parents}
+    child_ids = {child.chunk_id for child in children}
+
+    if len(parent_ids) != len(parents) or len(child_ids) != len(children):
+        raise ValueError("Duplicate hierarchical chunk IDs")
+
+    if parent_ids & child_ids:
+        raise ValueError("Parent and child chunk IDs must be distinct")
 
     if any(child.parent_chunk_id not in parent_ids for child in children):
         raise ValueError("Child references missing parent")
+
+    # Check both directions in source order, including exact ownership.
+    # A single cursor also ensures no children are omitted or reused.
+    cursor = 0
+    for parent in parents:
+        count = len(parent.child_chunk_ids)
+        assigned = children[cursor:cursor + count]
+        if not assigned:
+            raise ValueError("Parent has no children")
+        if [child.chunk_id for child in assigned] != parent.child_chunk_ids:
+            raise ValueError("Parent child IDs do not match child order")
+        if any(child.parent_chunk_id != parent.chunk_id for child in assigned):
+            raise ValueError("Parent-child links are inconsistent")
+        if "".join(child.text for child in assigned) != parent.text:
+            raise ValueError("Linked children do not reconstruct parent")
+        cursor += count
+
+    if cursor != len(children):
+        raise ValueError("Unassigned hierarchical children")
 
     return parents, children

@@ -87,3 +87,23 @@ class Chunk(BaseModel):
     parent_chunk_id: Optional[str] = None
     child_chunk_ids: List[str] = Field(default_factory=list)
     token_count: Optional[int] = None
+
+
+class StructureAwareChunk(Chunk):
+    """Source-preserving chunk plus a separately budgeted retrieval view.
+
+    ``text`` is the exact canonical source slice, including source overlap.
+    ``token_count`` counts that slice; index ``retrieval_text`` for this
+    strategy and enforce the model budget with ``retrieval_token_count``.
+    Offsets are Python character offsets, not PDF bytes or token offsets.
+    """
+    retrieval_text: str
+    retrieval_token_count: int
+    source_start_char: int
+    source_end_char: int
+    overlap_tokens: int = 0
+    source_pages: List[int] = Field(default_factory=list)
+    source_slides: List[int] = Field(default_factory=list)
+    source_section_hierarchies: List[List[str]] = Field(default_factory=list)
+    context_truncated: bool = False
+    has_split_unit: bool = False

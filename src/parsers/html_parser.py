@@ -214,3 +214,5 @@ def parse_html_to_normalized(file_path: str, document_id: str, metadata: Documen
         title = metadata.source_filename
 
     return NormalizedDocument(document_id=document_id, title=title, metadata=metadata, sections=sections)
+
+    
